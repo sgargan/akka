@@ -497,7 +497,7 @@ about successful state changes by publishing events.
 
 When persisting events with ``persist`` it is guaranteed that the processor will not receive further commands between
 the ``persist`` call and the execution(s) of the associated event handler. This also holds for multiple ``persist``
-calls in context of a single command. The example also shows how to switch between command different command handlers
+calls in context of a single command. The example also shows how to switch between different command handlers
 with ``context.become()`` and ``context.unbecome()``.
 
 The easiest way to run this example yourself is to download `Typesafe Activator <http://www.typesafe.com/platform/getstarted>`_
