@@ -46,16 +46,17 @@ object AbstractActor {
  */
 abstract class AbstractActor extends Actor {
 
-  import AbstractActor._
-
-  private var _receive: Receive = emptyBehavior
+  private var _receive: Receive = null
 
   /**
    * Set up the initial receive behavior of the Actor.
    *
    * @param receive  The receive behavior.
    */
-  def receive(receive: Receive): Unit = { _receive = receive }
+  @throws(classOf[IllegalActorStateException])
+  protected def receive(receive: Receive): Unit =
+    if (_receive == null) _receive = receive
+    else throw IllegalActorStateException("Actor behavior has already been set with receive(...)")
 
   /**
    * Returns this AbstractActor's AbstractActorContext
@@ -64,7 +65,9 @@ abstract class AbstractActor extends Actor {
    */
   def getContext(): AbstractActorContext = context.asInstanceOf[AbstractActorContext]
 
-  override def receive = _receive
+  override def receive =
+    if (_receive != null) _receive
+    else throw IllegalActorStateException("Actor behavior has not been set with receive(...)")
 }
 
 /**

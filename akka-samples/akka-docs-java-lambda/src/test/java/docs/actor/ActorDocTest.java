@@ -8,10 +8,16 @@ import akka.actor.*;
 import akka.event.LoggingAdapter;
 import akka.event.Logging;
 import akka.japi.pf.ReceiveBuilder;
+import akka.testkit.ErrorFilter;
+import akka.testkit.EventFilter;
+import akka.testkit.TestEvent;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 import scala.PartialFunction;
 import scala.runtime.BoxedUnit;
 import static docs.actor.Messages.Swap.Swap;
 import static docs.actor.Messages.*;
+import static akka.japi.Util.immutableSeq;
 
 import java.util.concurrent.TimeUnit;
 
@@ -43,11 +49,19 @@ import static akka.pattern.Patterns.gracefulStop;
 
 public class ActorDocTest {
 
+  public static Config config = ConfigFactory.parseString(
+    "akka {\n" +
+      "  loggers = [\"akka.testkit.TestEventListener\"]\n" +
+      "  loglevel = \"WARNING\"\n" +
+      "  stdout-loglevel = \"WARNING\"\n" +
+      "}\n"
+  );
+
   static ActorSystem system = null;
 
   @BeforeClass
   public static void beforeClass() {
-    system = ActorSystem.create("ActorDocTest");
+    system = ActorSystem.create("ActorDocTest", config);
   }
 
   @AfterClass
@@ -312,7 +326,7 @@ public class ActorDocTest {
   public void creatingActorWithSystemActorOf() {
     //#system-actorOf
     // ActorSystem is a heavy object: create only one per application
-    final ActorSystem system = ActorSystem.create("MySystem");
+    final ActorSystem system = ActorSystem.create("MySystem", config);
     final ActorRef myActor = system.actorOf(Props.create(MyActor.class), "myactor");
     //#system-actorOf
     try {
@@ -555,4 +569,72 @@ public class ActorDocTest {
       }
     };
   }
+
+  public static class NoReceiveActor extends AbstractActor {
+  }
+
+  @Test
+  public void noReceiveActor() {
+    EventFilter ex1 = new ErrorFilter(ActorInitializationException.class);
+    EventFilter[] ignoreExceptions = { ex1 };
+    try {
+      system.eventStream().publish(new TestEvent.Mute(immutableSeq(ignoreExceptions)));
+      new JavaTestKit(system) {{
+        final ActorRef victim = new EventFilter<ActorRef>(ActorInitializationException.class) {
+          protected ActorRef run() {
+            return system.actorOf(Props.create(NoReceiveActor.class), "victim");
+          }
+        }.message("Actor behavior has not been set with receive(...)").occurrences(1).exec();
+
+        assertEquals(true, victim.isTerminated());
+      }};
+    } finally {
+      system.eventStream().publish(new TestEvent.UnMute(immutableSeq(ignoreExceptions)));
+    }
+  }
+
+  public static class MultipleReceiveActor extends AbstractActor {
+    public MultipleReceiveActor() {
+      receive(ReceiveBuilder.
+          match(String.class, s1 -> s1.toLowerCase().equals("become"), s1 -> {
+            sender().tell(s1.toUpperCase(), self());
+            receive(ReceiveBuilder.
+              match(String.class, s2 -> {
+                sender().tell(s2.toLowerCase(), self());
+              }).build()
+            );
+          }).
+          match(String.class, s1 -> {
+            sender().tell(s1.toUpperCase(), self());
+          }).build()
+      );
+    }
+  }
+
+  @Test
+  public void multipleReceiveActor() {
+    EventFilter ex1 = new ErrorFilter(IllegalActorStateException.class);
+    EventFilter[] ignoreExceptions = { ex1 };
+    try {
+      system.eventStream().publish(new TestEvent.Mute(immutableSeq(ignoreExceptions)));
+      new JavaTestKit(system) {{
+        new EventFilter<Boolean>(IllegalActorStateException.class) {
+          protected Boolean run() {
+            ActorRef victim = system.actorOf(Props.create(MultipleReceiveActor.class), "victim2");
+            victim.tell("Foo", getRef());
+            expectMsgEquals("FOO");
+            victim.tell("bEcoMe", getRef());
+            expectMsgEquals("BECOME");
+            victim.tell("Foo", getRef());
+            // if it's upper case, then the actor was restarted
+            expectMsgEquals("FOO");
+            return true;
+          }
+        }.message("Actor behavior has already been set with receive(...)").occurrences(1).exec();
+      }};
+    } finally {
+      system.eventStream().publish(new TestEvent.UnMute(immutableSeq(ignoreExceptions)));
+    }
+  }
+
 }
